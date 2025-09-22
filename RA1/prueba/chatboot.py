@@ -1,155 +1,160 @@
-import os
-import sys
-import time
-import pickle
-from typing import List, Dict, Any
-import streamlit as st
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain.schema import HumanMessage, SystemMessage, AIMessage
-from langchain.memory import ConversationBufferMemory
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain.docstore.document import Document
+import os # Importa el módulo 'os' para interactuar con el sistema operativo (ej. leer variables de entorno, manejar rutas de archivos).
+import sys # Importa el módulo 'sys' para interactuar con el intérprete de Python.
+import time # Importa el módulo 'time' para funciones relacionadas con el tiempo, como 'sleep'.
+import pickle # Importa el módulo 'pickle' para serializar y deserializar objetos de Python (guardar/cargar objetos).
+from typing import List, Dict, Any # Importa tipos de datos para anotaciones, mejorando la legibilidad y el chequeo de tipos.
+import streamlit as st # Importa la biblioteca Streamlit para crear la interfaz de usuario web.
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings # Importa clases de LangChain para interactuar con modelos de chat y de embeddings de OpenAI.
+from langchain.schema import HumanMessage, SystemMessage, AIMessage # Importa las clases de mensajes para estructurar las conversaciones con el LLM.
+from langchain.memory import ConversationBufferMemory # Importa la clase para gestionar la memoria de la conversación.
+from langchain.text_splitter import RecursiveCharacterTextSplitter # Importa la clase para dividir textos largos en fragmentos (chunks).
+from langchain_community.vectorstores import FAISS # Importa la clase para usar FAISS, una base de datos vectorial eficiente.
+from langchain.docstore.document import Document # Importa la clase 'Document' para estructurar el texto con metadatos.
 
-class ChatbotEvaluacion:
-    def __init__(self, documentos: List[str] = None):
-        # Configuración del modelo con streaming
+class ChatbotEvaluacion: # Define la clase principal del chatbot.
+    def __init__(self): # Define el método constructor que se ejecuta al crear una instancia de la clase.
+        # Configuración del modelo de lenguaje (LLM) con streaming.
         self.llm = ChatOpenAI(
-            base_url="https://models.github.ai/inference",  #descubri que aqui  cambia de url base  
-            api_key=os.getenv("GITHUB_TOKEN"),     
-            model="openai/gpt-4o-mini",
-            temperature=0.7,
-            streaming=True
+            base_url="https://models.github.ai/inference",  # URL base de la API de modelos de GitHub.
+            api_key=os.getenv("GITHUB_TOKEN"),     # Obtiene la clave de API desde las variables de entorno.
+            model="openai/gpt-4o-mini", # Especifica el modelo a utilizar.
+            temperature=0.7, # Define la "creatividad" del modelo (valores más altos son más creativos).
+            streaming=True # Habilita el modo de streaming para recibir la respuesta token por token.
         )
         
-        # Modelo de embeddings
+        # Configuración del modelo de embeddings.
         self.embeddings = OpenAIEmbeddings(
-            base_url="https://models.github.ai/inference",
-            api_key=os.getenv("GITHUB_TOKEN")
+            base_url="https://models.github.ai/inference", # URL base para el servicio de embeddings.
+            api_key=os.getenv("GITHUB_TOKEN") # Usa la misma clave de API.
         )
         
-        # Sistema de memoria
+        # Inicialización del sistema de memoria para la conversación.
         self.memory = ConversationBufferMemory(
-            return_messages=True,
-            memory_key="chat_history"
+            return_messages=True, # Configura la memoria para que devuelva los mensajes como objetos (HumanMessage, AIMessage).
+            memory_key="chat_history" # Clave bajo la cual se guardará el historial en la memoria.
         )
         
-        # Base de datos vectorial
+        # Inicialización de la base de datos vectorial (inicialmente vacía).
         self.vectorstore = None
+        # Configuración del divisor de texto.
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200
+            chunk_size=1000, # Tamaño máximo de cada fragmento (chunk) en caracteres.
+            chunk_overlap=200 # Número de caracteres que se solapan entre chunks consecutivos para mantener el contexto.
         )
         
-        # Inicializar con documentos si se proporcionan
-        if documentos:
-            self.inicializar_rag(documentos)
+        # El RAG (Retrieval-Augmented Generation) se inicializará más tarde a través de la interfaz de usuario.
     
-    def inicializar_rag(self, documentos: List[str]):
+    def inicializar_rag(self, docs: List[Document]): # Define un método para inicializar el sistema RAG.
         """Inicializa el sistema RAG con los documentos proporcionados"""
-        st.info("📚 Inicializando sistema RAG...")
+        if not docs: # Comprueba si la lista de documentos está vacía.
+            st.error("No se proporcionaron documentos para inicializar RAG.") # Muestra un error en la UI si no hay documentos.
+            return # Termina la ejecución del método.
+            
+        st.info("📚 Inicializando sistema RAG...") # Muestra un mensaje informativo en la UI.
         
-        # Crear documentos
-        docs = []
-        for i, texto in enumerate(documentos):
-            docs.append(Document(
-                page_content=texto,
-                metadata={"source": f"doc_{i}", "page": 1}
-            ))
-        
-        # Dividir en chunks
+        # Divide los documentos en fragmentos (chunks) usando el divisor de texto configurado.
         chunks = self.text_splitter.split_documents(docs)
-        st.success(f"✓ Divididos {len(chunks)} chunks")
+        st.success(f"✓ Divididos {len(chunks)} chunks") # Muestra un mensaje de éxito con el número de chunks creados.
         
-        # Generar embeddings y crear base vectorial
+        # Genera los embeddings para cada chunk y crea la base de datos vectorial FAISS.
         self.vectorstore = FAISS.from_documents(chunks, self.embeddings)
-        st.success("✓ Base de datos vectorial FAISS creada")
+        st.success("✓ Base de datos vectorial FAISS creada") # Muestra un mensaje de éxito.
         
-        # Guardar la base de datos
+        # Guarda la base de datos vectorial en el disco local.
         self.vectorstore.save_local("faiss_index")
-        st.success("✓ Base de datos guardada en 'faiss_index'")
+        st.success("✓ Base de datos guardada en 'faiss_index'") # Muestra un mensaje de éxito.
     
-    def cargar_rag(self, ruta: str = "faiss_index"):
+    def cargar_rag(self, ruta: str = "faiss_index"): # Define un método para cargar una base de datos RAG existente.
         """Carga una base de datos vectorial existente"""
-        if os.path.exists(ruta):
-            self.vectorstore = FAISS.load_local(ruta, self.embeddings)
-            st.success("✓ Base de datos vectorial cargada")
-            return True
-        return False
+        if os.path.exists(ruta): # Comprueba si la ruta especificada existe en el disco.
+            # Carga la base de datos FAISS desde el disco, usando el modelo de embeddings configurado.
+            # allow_dangerous_deserialization es necesario por seguridad en versiones recientes de LangChain.
+            self.vectorstore = FAISS.load_local(ruta, self.embeddings, allow_dangerous_deserialization=True)
+            st.success("✓ Base de datos vectorial cargada") # Muestra un mensaje de éxito.
+            return True # Devuelve True si la carga fue exitosa.
+        return False # Devuelve False si la ruta no existe.
     
-    def buscar_contexto(self, pregunta: str, k: int = 3) -> str:
+    def buscar_contexto(self, pregunta: str, k: int = 3) -> str: # Define un método para buscar contexto relevante.
         """Busca contexto relevante en la base de datos vectorial"""
-        if not self.vectorstore:
-            return "Sistema RAG no inicializado. Por favor, carga documentos primero."
+        if not self.vectorstore: # Comprueba si la base de datos vectorial ha sido inicializada.
+            return "Sistema RAG no inicializado. Por favor, carga documentos primero." # Devuelve un mensaje de advertencia.
         
-        docs = self.vectorstore.similarity_search(pregunta, k=k)
+        # Realiza una búsqueda por similitud en la base de datos vectorial.
+        docs = self.vectorstore.similarity_search(pregunta, k=k) # 'k' es el número de documentos más relevantes a recuperar.
+        # Une el contenido de los documentos recuperados en un solo string.
         contexto = "\n\n".join([doc.page_content for doc in docs])
-        return f"Contexto relevante:\n{contexto}"
+        return f"Contexto relevante:\n{contexto}" # Devuelve el contexto formateado.
     
-    def generar_respuesta_con_streaming(self, pregunta: str, mostrar_contexto: bool = False):
+    def generar_respuesta_con_streaming(self, pregunta: str, mostrar_contexto: bool = False): # Define el método principal para generar respuestas.
         """Genera respuesta con streaming integrando RAG y memoria"""
         
-        # Buscar contexto relevante
+        # Busca contexto relevante en la base de datos vectorial si está disponible.
         contexto = self.buscar_contexto(pregunta) if self.vectorstore else ""
         
-        # Obtener historial de conversación
+        # Carga el historial de la conversación desde la memoria.
         historial = self.memory.load_memory_variables({})["chat_history"]
         
-        # Construir mensajes del sistema
-        system_prompt = """Eres un asistente educativo especializado en evaluaciones. 
-        Responde basándote en el contexto proporcionado y mantén un tono profesional.
-        Si la información no está en el contexto, indica claramente que no tienes esa información."""
+        # Construye el prompt del sistema que instruye al LLM sobre su rol y comportamiento.
+        system_prompt = """Eres un asistente de estudio experto para el curso 'Ingeniería de Soluciones con Inteligencia Artificial'.
+Tu conocimiento se basa EXCLUSIVAMENTE en el material de estudio proporcionado sobre los resultados de aprendizaje RA1 (IL1.1, IL1.2, IL1.3), que cubren LLMs, RAG, Prompt Engineering, embeddings y arquitecturas de IA.
+Responde las preguntas de los estudiantes de forma clara y concisa, basándote únicamente en el siguiente contexto.
+Si la pregunta no puede ser respondida con el contexto, indica amablemente: 'La información para responder a tu pregunta no se encuentra en el material de estudio de RA1 que tengo disponible.'
+No inventes información ni utilices conocimiento externo."""
         
+        # Inicializa la lista de mensajes con el prompt del sistema.
         messages = [SystemMessage(content=system_prompt)]
         
-        # Agregar historial de conversación
+        # Agrega el historial de la conversación a la lista de mensajes.
         for msg in historial:
             messages.append(msg)
         
-        # Agregar contexto y pregunta actual
+        # Si se debe mostrar el contexto, lo agrega como un mensaje del sistema.
         if contexto and mostrar_contexto:
             messages.append(SystemMessage(content=contexto))
         
+        # Agrega la pregunta actual del usuario como un mensaje humano.
         messages.append(HumanMessage(content=pregunta))
         
-        # Generar respuesta con streaming
-        respuesta_completa = ""
+        # Inicia la generación de respuesta con streaming.
+        respuesta_completa = "" # Variable para almacenar la respuesta completa.
         try:
-            # Crear un placeholder para la respuesta en streaming
+            # Crea un contenedor vacío en Streamlit que se actualizará dinámicamente.
             respuesta_placeholder = st.empty()
-            respuesta_texto = "🤖 **Asistente:** "
+            respuesta_texto = "🤖 **Asistente:** " # Texto inicial de la respuesta.
             
+            # Itera sobre los chunks de respuesta que llegan desde el LLM en modo streaming.
             for chunk in self.llm.stream(messages):
-                contenido = chunk.content
-                respuesta_texto += contenido
-                respuesta_placeholder.markdown(respuesta_texto + "▌")
-                respuesta_completa += contenido
-                time.sleep(0.02)
+                contenido = chunk.content # Obtiene el contenido del chunk actual.
+                respuesta_texto += contenido # Agrega el contenido al texto de la respuesta.
+                respuesta_placeholder.markdown(respuesta_texto + "▌") # Actualiza el placeholder con el texto y un cursor parpadeante.
+                respuesta_completa += contenido # Acumula el contenido en la variable de respuesta completa.
+                time.sleep(0.02) # Pequeña pausa para un efecto visual más suave.
             
-            # Mostrar respuesta final sin el cursor
+            # Muestra la respuesta final en el placeholder sin el cursor.
             respuesta_placeholder.markdown(respuesta_texto)
             
-            # Guardar en memoria
+            # Guarda el par pregunta/respuesta en la memoria para mantener el contexto de la conversación.
             self.memory.save_context(
                 {"input": pregunta},
                 {"output": respuesta_completa}
             )
             
-            return respuesta_completa
+            return respuesta_completa # Devuelve la respuesta completa generada.
             
-        except Exception as e:
-            error_msg = f"❌ Error en la generación: {e}"
-            st.error(error_msg)
-            return error_msg
+        except Exception as e: # Maneja posibles errores durante la generación.
+            error_msg = f"❌ Error en la generación: {e}" # Formatea el mensaje de error.
+            st.error(error_msg) # Muestra el error en la interfaz de Streamlit.
+            return error_msg # Devuelve el mensaje de error.
     
-    def evaluar_respuesta(self, pregunta: str, respuesta_usuario: str) -> Dict[str, Any]:
+    def evaluar_respuesta(self, pregunta: str, respuesta_usuario: str) -> Dict[str, Any]: # Define un método para evaluar la respuesta de un usuario.
         """Evalúa una respuesta del usuario comparándola con el contexto"""
-        if not self.vectorstore:
-            return {"error": "Sistema RAG no inicializado"}
+        if not self.vectorstore: # Comprueba si el sistema RAG está inicializado.
+            return {"error": "Sistema RAG no inicializado"} # Devuelve un error si no lo está.
         
-        # Buscar contexto relevante
+        # Busca el contexto relevante para la pregunta.
         contexto = self.buscar_contexto(pregunta)
         
+        # Crea un prompt específico para que el LLM evalúe la respuesta del estudiante.
         prompt_evaluacion = f'''
         Evalúa la siguiente respuesta del estudiante:
         
@@ -166,138 +171,165 @@ class ChatbotEvaluacion:
         '''
         
         try:
+            # Llama al LLM con el prompt de evaluación.
             respuesta = self.llm.invoke([HumanMessage(content=prompt_evaluacion)])
+            # Devuelve un diccionario con el feedback y el contexto utilizado.
             return {
-                "puntuacion": 0,  # Se extraería del análisis
-                "feedback": respuesta.content,
-                "contexto_utilizado": contexto[:500] + "..." if len(contexto) > 500 else contexto
+                "puntuacion": 0,  # Placeholder, idealmente se extraería del 'feedback' con parsing.
+                "feedback": respuesta.content, # El feedback generado por el LLM.
+                "contexto_utilizado": contexto[:500] + "..." if len(contexto) > 500 else contexto # Muestra una parte del contexto.
             }
-        except Exception as e:
+        except Exception as e: # Maneja errores durante la evaluación.
             return {"error": f"Error en evaluación: {e}"}
     
-    def mostrar_estadisticas(self):
+    def mostrar_estadisticas(self): # Define un método para mostrar estadísticas.
         """Muestra estadísticas del chatbot"""
+        # Carga el historial de la conversación desde la memoria.
         historial = self.memory.load_memory_variables({})["chat_history"]
-        st.subheader("📊 Estadísticas del Chatbot")
-        st.write(f"💬 **Mensajes en memoria:** {len(historial)}")
-        st.write(f"📚 **Base vectorial:** {'✓ Cargada' if self.vectorstore else '✗ No disponible'}")
-        if self.vectorstore:
-            st.write(f"📖 **Documentos indexados:** {self.vectorstore.index.ntotal}")
+        st.subheader("📊 Estadísticas del Chatbot") # Título para la sección de estadísticas.
+        st.write(f"💬 **Mensajes en memoria:** {len(historial)}") # Muestra el número de mensajes en memoria.
+        st.write(f"📚 **Base vectorial:** {'✓ Cargada' if self.vectorstore else '✗ No disponible'}") # Indica si la base vectorial está cargada.
+        if self.vectorstore: # Si la base vectorial existe...
+            st.write(f"📖 **Documentos indexados:** {self.vectorstore.index.ntotal}") # Muestra el número de documentos (chunks) indexados.
 
 # FUNCIONES DE UTILIDAD PARA LA EVALUACIÓN
 
-def inicializar_documentos_ejemplo() -> List[str]:
-    """Proporciona documentos de ejemplo para la evaluación"""
-    documentos = [
-        """
-        La inteligencia artificial (IA) es la simulación de procesos de inteligencia humana por máquinas, 
-        especialmente sistemas informáticos. Estos procesos incluyen el aprendizaje, el razonamiento 
-        y la autocorrección.
-        """,
-        """
-        El machine learning es un subconjunto de la IA que se centra en el desarrollo de algoritmos 
-        que permiten a las computadoras aprender y hacer predicciones basadas en datos.
-        """,
-        """
-        LangChain es un framework para desarrollar aplicaciones con modelos de lenguaje. 
-        Proporciona herramientas para la gestión de memoria, cadenas de procesamiento 
-        y integración con bases de datos vectoriales.
-        """,
-        """
-        Los embeddings son representaciones vectoriales de texto que capturan el significado semántico. 
-        Se utilizan en búsqueda semántica y sistemas de recomendación.
-        """,
-        """
-        FAISS (Facebook AI Similarity Search) es una biblioteca para búsqueda eficiente de similitudes 
-        en vectores de alta dimensión. Es ideal para sistemas de recuperación de información.
-        """
-    ]
-    return documentos
+def cargar_material_ra1() -> List[Document]: # Define una función para cargar los archivos de material de estudio.
+    """Carga el material de estudio de los módulos RA1 desde archivos markdown."""
+    st.info("Cargando material de estudio de RA1...") # Mensaje informativo en la UI.
+    documentos = [] # Inicializa una lista vacía para almacenar los documentos.
+    # Define un diccionario con nombres lógicos y rutas relativas a los archivos.
+    rutas_archivos = {
+        "IL1.1_README": "../IL1.1/README.md",
+        "IL1.1_Presentacion": "../IL1.1/presentacion.md",
+        "IL1.3_README": "../IL1.3/README.md",
+        "IL1.3_Presentacion": "../IL1.3/presentacion.md",
+        "Evaluaciones_RA1": "../../main_files/Evaluaciones.md"
+    }
+    
+    # Obtiene la ruta absoluta del directorio donde se encuentra el script actual.
+    dir_actual = os.path.dirname(os.path.abspath(__file__))
 
-def main():
-    st.set_page_config(
-        page_title="Chatbot de Evaluación Educativa",
-        page_icon="🤖",
-        layout="wide"
+    # Itera sobre el diccionario de rutas de archivos.
+    for nombre, ruta_relativa in rutas_archivos.items():
+        try:
+            # Construye la ruta absoluta del archivo.
+            ruta_absoluta = os.path.normpath(os.path.join(dir_actual, ruta_relativa))
+            # Abre y lee el archivo con codificación UTF-8.
+            with open(ruta_absoluta, 'r', encoding='utf-8') as f:
+                contenido = f.read() # Lee todo el contenido del archivo.
+                # Lógica especial para el archivo de Evaluaciones: solo carga hasta la formativa 2.
+                if "Evaluaciones" in nombre:
+                    if "## EVALUACIÓN FORMATIVA 2" in contenido:
+                        contenido = contenido.split("## EVALUACIÓN FORMATIVA 2")[0] # Trunca el contenido.
+
+                # Crea un objeto Document de LangChain con el contenido y metadatos.
+                documentos.append(Document(
+                    page_content=contenido,
+                    metadata={"source": nombre, "file_path": ruta_relativa}
+                ))
+            st.write(f"✓ Cargado: {nombre}") # Mensaje de éxito por cada archivo cargado.
+        except FileNotFoundError: # Maneja el error si un archivo no se encuentra.
+            st.warning(f"⚠️ No se encontró el archivo: {ruta_absoluta}")
+        except Exception as e: # Maneja cualquier otro error durante la carga.
+            st.error(f"❌ Error al cargar {ruta_absoluta}: {e}")
+            
+    if not documentos: # Si no se cargó ningún documento...
+        st.error("No se pudo cargar ningún material de estudio. El chatbot no tendrá contexto.") # Muestra un error.
+    
+    return documentos # Devuelve la lista de objetos Document.
+
+def main(): # Función principal que define la aplicación Streamlit.
+    st.set_page_config( # Configura la página de la aplicación.
+        page_title="Asistente de Estudio RA1", # Título que aparece en la pestaña del navegador.
+        page_icon="🤖", # Ícono de la página.
+        layout="wide" # Utiliza un diseño de página ancho.
     )
     
-    st.title("🤖 Chatbot de Evaluación Educativa")
-    st.markdown("Sistema RAG con memoria y evaluación de respuestas")
+    st.title("🤖 Asistente de Estudio para RA1") # Título principal de la aplicación.
+    st.markdown("Usa este chatbot para preguntar sobre el material de estudio de los módulos IL1.1, IL1.2 e IL1.3.") # Subtítulo o descripción.
     
-    # Inicializar el chatbot en session state
+    # Inicializa el chatbot en el estado de la sesión de Streamlit si no existe.
+    # Esto asegura que el objeto chatbot persista entre interacciones del usuario.
     if 'chatbot' not in st.session_state:
         st.session_state.chatbot = ChatbotEvaluacion()
     
-    # Sidebar para configuración
+    # Crea una barra lateral para las opciones de configuración.
     with st.sidebar:
-        st.header("Configuración")
+        st.header("Configuración") # Título de la barra lateral.
         
-        # Opción para cargar documentos
-        if st.button("📚 Cargar documentos de ejemplo"):
-            documentos = inicializar_documentos_ejemplo()
-            st.session_state.chatbot.inicializar_rag(documentos)
+        # Botón para cargar el material de estudio.
+        if st.button("📚 Cargar material de estudio RA1"):
+            docs = cargar_material_ra1() # Llama a la función para cargar los archivos.
+            if docs: # Si se cargaron documentos...
+                st.session_state.chatbot.inicializar_rag(docs) # Inicializa el RAG con los documentos.
         
-        # Opción para cargar base existente
+        # Botón para cargar una base de datos vectorial existente.
         if st.button("🔍 Cargar base de datos existente"):
-            if st.session_state.chatbot.cargar_rag():
-                st.success("Base de datos cargada exitosamente")
+            if st.session_state.chatbot.cargar_rag(): # Intenta cargar la base de datos.
+                st.success("Base de datos cargada exitosamente") # Mensaje de éxito.
             else:
-                st.error("No se encontró base de datos existente")
+                st.error("No se encontró base de datos existente") # Mensaje de error.
         
-        # Mostrar estadísticas
+        # Botón para mostrar estadísticas del chatbot.
         if st.button("📊 Mostrar estadísticas"):
-            st.session_state.chatbot.mostrar_estadisticas()
+            st.session_state.chatbot.mostrar_estadisticas() # Llama al método para mostrar estadísticas.
         
-        # Limpiar memoria
+        # Botón para limpiar la memoria de la conversación.
         if st.button("🗑️ Limpiar memoria"):
-            st.session_state.chatbot.memory.clear()
-            st.success("Memoria limpiada")
+            st.session_state.chatbot.memory.clear() # Limpia la memoria.
+            st.success("Memoria limpiada") # Mensaje de éxito.
         
-        st.markdown("---")
-        st.markdown("### Modos de uso")
+        st.markdown("---") # Línea divisoria.
+        st.markdown("### Modos de uso") # Subtítulo para los modos.
+        # Botones de radio para seleccionar el modo de operación.
         modo = st.radio("Selecciona el modo:", 
                        ["💬 Chat", "📝 Evaluación"])
     
-    # Contenido principal según el modo seleccionado
+    # Lógica para el contenido principal según el modo seleccionado.
     if modo == "💬 Chat":
-        st.header("💬 Modo Chat")
+        st.header("💬 Modo Chat") # Título para el modo chat.
         
-        # Mostrar historial de chat
+        # Muestra el historial de chat si existe.
         if hasattr(st.session_state.chatbot, 'memory'):
             historial = st.session_state.chatbot.memory.load_memory_variables({})["chat_history"]
             if historial:
-                with st.expander("📜 Historial de conversación"):
-                    for i, msg in enumerate(historial):
-                        if isinstance(msg, HumanMessage):
+                with st.expander("📜 Historial de conversación"): # Crea una sección expandible.
+                    for i, msg in enumerate(historial): # Itera sobre los mensajes del historial.
+                        if isinstance(msg, HumanMessage): # Si es un mensaje de usuario...
                             st.write(f"**🧑 Usuario:** {msg.content}")
-                        elif isinstance(msg, AIMessage):
+                        elif isinstance(msg, AIMessage): # Si es un mensaje del asistente...
                             st.write(f"**🤖 Asistente:** {msg.content}")
         
-        # Input del usuario
+        # Área de texto para que el usuario ingrese su pregunta.
         pregunta = st.text_area("Escribe tu pregunta:", placeholder="¿En qué puedo ayudarte?")
         
-        col1, col2 = st.columns([1, 5])
+        col1, col2 = st.columns([1, 5]) # Divide el espacio en dos columnas.
         with col1:
+            # Checkbox para decidir si se muestra el contexto recuperado por RAG.
             mostrar_contexto = st.checkbox("Mostrar contexto", value=False)
         with col2:
+            # Botón para enviar la pregunta.
             if st.button("🚀 Enviar pregunta", type="primary"):
-                if pregunta.strip():
-                    with st.spinner("Generando respuesta..."):
+                if pregunta.strip(): # Comprueba que la pregunta no esté vacía.
+                    with st.spinner("Generando respuesta..."): # Muestra un indicador de carga.
+                        # Llama al método para generar la respuesta.
                         st.session_state.chatbot.generar_respuesta_con_streaming(
                             pregunta, 
                             mostrar_contexto=mostrar_contexto
                         )
                 else:
-                    st.warning("Por favor, escribe una pregunta")
+                    st.warning("Por favor, escribe una pregunta") # Advierte si la pregunta está vacía.
     
     elif modo == "📝 Evaluación":
-        st.header("📝 Modo Evaluación")
+        st.header("📝 Modo Evaluación") # Título para el modo evaluación.
         
-        st.markdown("Evalúa una respuesta del estudiante comparándola con el contexto disponible.")
+        st.markdown("Evalúa una respuesta del estudiante comparándola con el contexto disponible.") # Descripción.
         
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns(2) # Divide el espacio en dos columnas.
         
         with col1:
+            # Área de texto para la pregunta de evaluación.
             pregunta_eval = st.text_area(
                 "Pregunta de evaluación:",
                 placeholder="Ej: ¿Qué es la inteligencia artificial?",
@@ -305,39 +337,42 @@ def main():
             )
         
         with col2:
+            # Área de texto para la respuesta del estudiante.
             respuesta_estudiante = st.text_area(
                 "Respuesta del estudiante:",
                 placeholder="Ej: La IA es cuando las máquinas piensan como humanos",
                 height=100
             )
         
+        # Botón para iniciar la evaluación.
         if st.button("📋 Evaluar respuesta", type="primary"):
-            if pregunta_eval.strip() and respuesta_estudiante.strip():
-                with st.spinner("Evaluando respuesta..."):
+            if pregunta_eval.strip() and respuesta_estudiante.strip(): # Comprueba que ambos campos estén llenos.
+                with st.spinner("Evaluando respuesta..."): # Muestra un indicador de carga.
+                    # Llama al método de evaluación.
                     evaluacion = st.session_state.chatbot.evaluar_respuesta(
                         pregunta_eval, 
                         respuesta_estudiante
                     )
                     
-                    if "error" not in evaluacion:
-                        st.subheader("Resultado de la evaluación")
-                        st.markdown(evaluacion["feedback"])
+                    if "error" not in evaluacion: # Si no hubo error en la evaluación...
+                        st.subheader("Resultado de la evaluación") # Muestra el resultado.
+                        st.markdown(evaluacion["feedback"]) # Muestra el feedback del LLM.
                         
-                        with st.expander("📚 Contexto utilizado"):
+                        with st.expander("📚 Contexto utilizado"): # Sección expandible para el contexto.
                             st.text(evaluacion["contexto_utilizado"])
                     else:
-                        st.error(evaluacion["error"])
+                        st.error(evaluacion["error"]) # Muestra el error si ocurrió uno.
             else:
-                st.warning("Por favor, completa ambos campos")
+                st.warning("Por favor, completa ambos campos") # Advierte si faltan campos.
 
-    # Footer
+    # Pie de página de la aplicación.
     st.markdown("---")
-    st.markdown("*Sistema de evaluación educativa con RAG y memoria de conversación*")
+    st.markdown("*Asistente de estudio con RAG y memoria de conversación para RA1*")
 
-if __name__ == "__main__":
-    # Verificar que la API key esté configurada
+if __name__ == "__main__": # Punto de entrada del script. Se ejecuta solo si el archivo es corrido directamente.
+    # Verifica si la variable de entorno GITHUB_TOKEN está configurada.
     if not os.getenv("GITHUB_TOKEN"):
-        st.error("⚠️ Por favor, configura la variable de entorno GITHUB_TOKEN")
+        st.error("⚠️ Por favor, configura la variable de entorno GITHUB_TOKEN") # Muestra un error si no está configurada.
         st.info("""
         Para usar esta aplicación, necesitas:
         1. Obtener un token de GitHub con permisos adecuados
@@ -347,4 +382,4 @@ if __name__ == "__main__":
            ```
         """)
     else:
-        main()
+        main() # Llama a la función principal para iniciar la aplicación.
