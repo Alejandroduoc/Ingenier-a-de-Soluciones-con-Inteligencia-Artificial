@@ -1,7 +1,7 @@
 """
-IL2.3: Planificación con LangChain
-=================================
-Ejemplo de cómo un agente LangChain puede planificar y ejecutar pasos usando herramientas.
+IL2.3: Planificación Básica con LangChain
+========================================
+Ejemplo de cómo un agente LangChain puede planificar y ejecutar pasos simples usando una herramienta.
 """
 
 # Requiere: pip install langchain langchain-openai openai python-dotenv
@@ -26,20 +26,7 @@ if not github_token:
     print("💡 Tu archivo .env debe contener: GITHUB_TOKEN=tu_token_aqui")
     exit(1)
 
-# Herramienta personalizada: suma
-def sumar(x):
-    try:
-        return str(eval(x))
-    except Exception:
-        return "Error en la operación"
-
-herramienta_suma = Tool(
-    name="Calculadora",
-    func=sumar,
-    description="Realiza sumas y operaciones matemáticas simples."
-)
-
-# Inicializa el LLM y el agente
+# Configurar usando variables de entorno
 llm = ChatOpenAI(
     model="gpt-4o",
     base_url=github_base_url,
@@ -49,14 +36,24 @@ llm = ChatOpenAI(
 
 print("✅ LLM configurado correctamente")
 
+# Herramienta personalizada: pasos para preparar café
+def pasos_cafe(_):
+    return "1. Calentar agua\n2. Añadir café al filtro\n3. Verter agua caliente\n4. Servir en una taza"
+
+herramienta_cafe = Tool(
+    name="PasosCafé",
+    func=pasos_cafe,
+    description="Devuelve los pasos para preparar café."
+)
+
+# Inicializa el agente
 agente = initialize_agent(
-    tools=[herramienta_suma],
+    tools=[herramienta_cafe],
     llm=llm,
     agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
     verbose=True
 )
 
 if __name__ == "__main__":
-    print("Planificación y ejecución con LangChain:")
-    resultado = agente.run("¿Cuánto es 55 X 100?")
-    print(resultado)
+    print("Planificación con LangChain:")
+    print(agente.run("¿Cuáles son los pasos para preparar café?")) 

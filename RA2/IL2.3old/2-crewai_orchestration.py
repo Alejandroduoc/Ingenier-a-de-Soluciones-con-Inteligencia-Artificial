@@ -4,7 +4,7 @@ IL2.3: Orquestación Multi-Agente con CrewAI
 Ejemplo de cómo dos agentes CrewAI colaboran para resolver una tarea.
 """
 
-# Requiere: pip install crewai crewai-tools python-dotenv
+# Requiere: pip install crewai
 from crewai import Agent, Task, Crew
 import os
 
@@ -25,13 +25,11 @@ if not github_token:
     print("💡 Tu archivo .env debe contener: GITHUB_TOKEN=tu_token_aqui")
     exit(1)
 
-# Configurar variables de entorno para CrewAI (usa formato OpenAI)
+
 os.environ["OPENAI_API_KEY"] = github_token
 os.environ["OPENAI_API_BASE"] = github_base_url
-os.environ["OPENAI_MODEL_NAME"] = "gpt-4o"
-
-print("✅ Variables de entorno configuradas para CrewAI")
-
+os.environ["OPENAI_MODEL"] = "gpt-4o"
+print("✅ Variables de entorno configuradas correctamente")
 # Agente 1: Investigador
 investigador = Agent(
     role="Investigador",
@@ -49,12 +47,12 @@ redactor = Agent(
 # Tareas
 tarea_investigar = Task(
     description="Busca cuál es la capital de Francia",
-    expected_output="El nombre de la capital de Francia",
+    expected_output="El nombre de la capital de Francia.",
     agent=investigador
 )
 tarea_redactar = Task(
     description="Redacta una respuesta usando la información encontrada",
-    expected_output="Una respuesta clara y breve sobre la capital de Francia",
+    expected_output="Una respuesta clara y breve sobre la capital de Francia.",
     agent=redactor,
     context=[tarea_investigar]
 )
