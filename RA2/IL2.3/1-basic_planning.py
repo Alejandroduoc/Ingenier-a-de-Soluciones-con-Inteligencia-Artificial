@@ -6,7 +6,12 @@ Ejemplo de cómo un agente LangChain puede planificar y ejecutar pasos simples u
 
 # Requiere: pip install langchain langchain-openai openai python-dotenv
 from langchain_openai import ChatOpenAI
-from langchain.agents import initialize_agent, Tool, AgentType
+
+from langchain.tools import Tool
+from langchain.agents.agent import initialize_agent, AgentType
+
+
+#from langchain.agents import initialize_agent, Tool, AgentType
 import os
 
 # Load environment variables from .env file

@@ -1,140 +1,107 @@
 import os
 import glob
 import json
-from typing import List, Dict, Any
+import numpy as np
+from typing import List, Dict, Any, Set
+from dataclasses import dataclass, field
 
 import streamlit as st
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.memory.buffer import ConversationBufferMemory
+import faiss
+from openai import OpenAI
 
+# --- 1. Clases de Datos y Componentes Fundamentales (Sin LangChain) ---
 
+@dataclass
+class Document:
+    page_content: str
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
-from langchain.memory import ConversationBufferMemory 
-from langchain.text_splitter import RecursiveCharacterTextSplitter 
-from langchain_core.documents import Document
-from langchain.tools import tool
-from langchain_core.tools import BaseTool
-from langchain.agents import AgentExecutor, create_openai_tools_agent
+@dataclass
+class Action:
+    name: str
+    preconditions: Set[str]
+    add_effects: Set[str]
+    delete_effects: Set[str] = field(default_factory=set)
+    cost: float = 1.0
 
-# --- 1. Definición de Herramientas Especializadas (Concepto de RA2) ---
-@tool
-def knowledge_base_tool(query: str) -> str:
-    """
-    Busca en la base de conocimientos del curso (documentos .md y .py de RA1 y RA2)
-    para encontrar información relevante a la consulta del usuario. Es la herramienta
-    principal para responder preguntas sobre el CONTENIDO del curso, como conceptos,
-    definiciones o explicaciones.
-    """
-    # La lógica de búsqueda se inyecta desde el orquestador
-    if 'orquestador' in st.session_state and st.session_state.orquestador.vectorstore:
-        docs = st.session_state.orquestador.vectorstore.similarity_search(query, k=4)
-        if not docs:
-            return "No se encontró información relevante en la base de conocimientos."
-        context = "\n\n".join([doc.page_content for doc in docs])
-        return f"Contexto encontrado:\n{context}"
-    return "La base de conocimientos no está disponible o inicializada."
+    def applicable(self, state: Set[str]) -> bool:
+        return self.preconditions.issubset(state)
 
-@tool
-def project_structure_tool(directory: str) -> str:
-    """
-    Analiza y lista la estructura de archivos de un directorio específico del proyecto
-    (ej. 'RA1/IL1.3' o 'RA2/IL2.3'). Es útil para responder preguntas sobre la
-    organización del curso, los temas cubiertos en cada módulo o qué archivos existen.
-    """
-    # La ruta base se inyecta desde el orquestador
-    if 'orquestador' in st.session_state:
-        project_root = st.session_state.orquestador.project_root
-        path_to_scan = os.path.join(project_root, directory)
-        if not os.path.isdir(path_to_scan):
-            return f"Error: El directorio '{directory}' no existe."
-        
-        files = glob.glob(os.path.join(path_to_scan, '**', '*.*'), recursive=True)
-        relative_files = [os.path.relpath(f, project_root) for f in files]
-        
-        if not relative_files:
-            return f"No se encontraron archivos en el directorio '{directory}'."
-            
-        return f"Archivos encontrados en '{directory}':\n" + "\n".join(relative_files)
-    return "El orquestador no está inicializado para acceder a la estructura del proyecto."
+    def apply(self, state: Set[str]) -> Set[str]:
+        new_state = state.copy()
+        new_state -= self.delete_effects
+        new_state |= self.add_effects
+        return new_state
 
-
-# --- 2. Definición de Agentes Especializados (Concepto de IL2.3) ---
-
-class SpecializedAgent:
-    """Clase base para un agente especializado con un rol y herramientas."""
-    def __init__(self, name: str, role: str, tools: List[BaseTool], llm: ChatOpenAI):
-        self.name = name
-        self.role = role
-        self.tools = tools
-        self.llm = llm
-
-    def __str__(self):
-        return f"Agente(name={self.name}, role={self.role}, tools={[t.name for t in self.tools]})"
+@dataclass
+class SubTask:
+    id: str
+    title: str
+    description: str
+    goal: str # Objetivo específico para el planificador
 
 class OrquestadorCurso:
     """
-    Orquesta un equipo de agentes especializados para responder preguntas sobre el curso.
-    Aplica conceptos de RAG (RA1), Herramientas (RA2) y Orquestación Multi-Agente (IL2.3).
-    Su rol es delegar tareas, no ejecutarlas directamente.
+    Orquesta la respuesta a preguntas complejas usando Descomposición de Tareas y Planificación.
+    Aplica conceptos de RAG (RA1), Descomposición y Planificación (IL2.3) sin usar LangChain.
     """
     def __init__(self):
-        # --- Configuración Global (LLM y Embeddings) ---
-        self.llm = ChatOpenAI(
+        # --- Configuración Global (Cliente OpenAI) ---
+        self.client = OpenAI(
             base_url="https://models.github.ai/inference",
             api_key=os.getenv("GITHUB_TOKEN"),
-            model="openai/gpt-4o-mini",
-            temperature=0.5,
-            streaming=False # Desactivado para compatibilidad con AgentExecutor
         )
-        self.embeddings = OpenAIEmbeddings(
-            base_url="https://models.github.ai/inference",
-            api_key=os.getenv("GITHUB_TOKEN")
-        )
+        self.model = "openai/gpt-4o-mini"
         
-        # --- Memoria Centralizada (Concepto de RA2) ---
-        self.memory = ConversationBufferMemory(
-            return_messages=True, memory_key="chat_history"
-        )
+        # --- Memoria de Conversación (Simple) ---
+        self.memory = []
         
-        # --- Componentes RAG Centralizados (Concepto de RA1) ---
+        # --- Componentes RAG (Sin LangChain) ---
         self.vectorstore = None
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1500, chunk_overlap=250
-        )
+        self.documents = [] # Almacena los documentos originales (chunks)
+        self.chunk_size = 1500
+        self.chunk_overlap = 250
         
-        # --- 3. Creación del Equipo de Agentes (Concepto de Orquestación de IL2.3) ---
-        self.agente_contenido = SpecializedAgent(
-            name="AgenteContenidoRAG",
-            role="Experto en el contenido y los conceptos del curso. Usa la base de conocimientos para responder preguntas.",
-            tools=[knowledge_base_tool],
-            llm=self.llm
-        )
+        # --- Componentes de Planificación (IL2.3) ---
+        self.actions = self._definir_acciones()
         
-        self.agente_planificador = SpecializedAgent(
-            name="AgentePlanificador",
-            role="Experto en la estructura y organización del proyecto. Usa la herramienta de estructura de proyecto para listar archivos y entender la planificación.",
-            tools=[project_structure_tool],
-            llm=self.llm
-        )
-
-        self.team = {
-            "contenido": self.agente_contenido,
-            "planificacion": self.agente_planificador
-        }
-        
-        # Ruta raíz del proyecto para la herramienta de estructura
+        # --- Ruta raíz del proyecto ---
         base_path = os.path.dirname(os.path.abspath(__file__))
         self.project_root = os.path.normpath(os.path.join(base_path, '..', '..'))
-        
+
+    def _call_llm(self, messages: List[Dict[str, str]], temperature: float = 0.3) -> str:
+        """Llamada directa al API de OpenAI."""
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=temperature,
+        )
+        return response.choices[0].message.content
+
+    def _get_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """Obtiene embeddings directamente del API."""
+        response = self.client.embeddings.create(
+            input=texts,
+            model="openai/text-embedding-ada-002" # Modelo de embedding compatible
+        )
+        return [item.embedding for item in response.data]
+
+    def _split_text(self, text: str) -> List[str]:
+        """Implementación simple de RecursiveCharacterTextSplitter."""
+        chunks = []
+        start = 0
+        while start < len(text):
+            end = start + self.chunk_size
+            chunks.append(text[start:end])
+            start += self.chunk_size - self.chunk_overlap
+        return chunks
+
     def inicializar_rag_con_contenido_curso(self):
         """Carga, divide e indexa el contenido de RA1 y RA2."""
         st.info("📚 Cargando material de estudio de RA1 y RA2...")
         
-        # --- Carga de Documentos (Lógica de RAG de RA1) ---
-        docs = []
-        # Asume que el script se ejecuta desde la raíz del proyecto o ajusta la ruta
-        
+        # --- Carga de Documentos ---
+        loaded_docs = []
         rutas_a_buscar = [
             os.path.join(self.project_root, 'RA1', '**', '*.md'),
             os.path.join(self.project_root, 'RA2', '**', '*.md'),
